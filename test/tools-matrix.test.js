@@ -180,6 +180,36 @@ test('rw_edit replaces the matched text and refuses an ambiguous edit', async ()
   })
 })
 
+test('rw_edit reports the applied text diff and omits unchanged or oversized snapshots', async () => {
+  await withTools({}, async ({ host, srv }) => {
+    const path = '/home/user/notes.txt'
+    const args = { file_path: path, old_string: 'first line', new_string: '第一行' }
+    const tool = host.tool('rw_edit')
+    const result = await host.run('rw_edit', args)
+    const content = tool.output.render(args, result)
+    const meta = tool.output.presentationMeta(args, result)
+    assert.equal(srv.fs.readText(path), '第一行\nsecond line\n')
+    assert.deepEqual(content, [{ type: 'text', text: `edited ${path}: replaced 1 occurrence(s)` }])
+    assert.deepEqual(meta, {
+      diffs: [{ path, oldText: TREE[path], newText: '第一行\nsecond line\n' }],
+    })
+    assert.deepEqual(tool.presentResult(args, { isError: false, content, meta }), {
+      card: 'diff', title: `Edit ${path}`, diffs: meta.diffs,
+    })
+    assert.equal(tool.presentResult(args, { isError: true, content, meta }), undefined)
+
+    const unchanged = { path, old: '第一行', new: '第一行' }
+    assert.equal(tool.output.presentationMeta(unchanged, await host.run('rw_edit', unchanged)), undefined)
+
+    const nested = await tool.execute({ path, old: 'second line', new: 'last line' }, { parent: Symbol('run_code') })
+    assert.deepEqual(Object.keys(nested).sort(), ['bytes', 'ok', 'text'])
+
+    const large = { path, old: '第一行', new: 'a'.repeat(64 * 1024 + 1) }
+    assert.equal(tool.output.presentationMeta(large, await host.run('rw_edit', large)), undefined)
+    assert.equal(srv.fs.readText(path), large.new + '\nlast line\n')
+  })
+})
+
 test('rw_mkdir, rw_move and rw_remove act on the remote tree', async () => {
   await withTools({}, async ({ host, srv }) => {
     await host.run('rw_mkdir', { path: '/home/user/made' })
